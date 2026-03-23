@@ -1,8 +1,7 @@
 local getModLabel = require('client.utils.getModLabel')
-local originalMods = {}
-local originalTurbo
-local lastIndex
 local VehicleClass = require('client.utils.enums.VehicleClass')
+local installMod = require('client.utils.installMod')
+local performanceMenuId = 'customs-performance'
 
 local function priceLabel(price)
     if type(price) ~= 'table' then
@@ -16,116 +15,145 @@ local function priceLabel(price)
     return table.concat(copy, ' | ')
 end
 
-local function performance()
+local registerPerformanceContext -- forward declaration
+
+registerPerformanceContext = function()
     local options = {}
+
     for _, mod in ipairs(Config.Mods) do
         local modCount = GetNumVehicleMods(vehicle, mod.id)
         if mod.category ~= 'performance'
-        or mod.enabled == false
-        or modCount == 0
-        then goto continue end
-        local modLabels = {}
-        modLabels[1] = 'Stock'
+            or mod.enabled == false
+            or modCount == 0
+        then
+            goto continue
+        end
+
+        local modLabels = { 'Stock' }
         for i = -1, modCount - 1 do
             modLabels[i + 2] = getModLabel(vehicle, mod.id, i)
         end
+
         local currentMod = GetVehicleMod(vehicle, mod.id)
-        originalMods[mod.id] = currentMod
-        options[#options+1] = {
-            id = mod.id,
-            label = mod.label,
-            description = priceLabel(Config.Prices[mod.id]),
-            values = modLabels,
-            close = true,
-            defaultIndex = currentMod + 2,
-            set = function(index)
-                SetVehicleMod(vehicle, mod.id, index - 2, false)
-                return currentMod == index - 2, ('%s installed'):format(modLabels[index])
+        local currentLabel = modLabels[currentMod + 2] or 'Stock'
+        local subContextId = ('%s-%d'):format(performanceMenuId, mod.id)
+
+        local subOptions = {}
+        for i, label in ipairs(modLabels) do
+            local index = i
+            local modIndex = index - 2
+            local isCurrent = modIndex == currentMod
+            subOptions[#subOptions + 1] = {
+                title = isCurrent and ('✓ %s'):format(label) or label,
+                onSelect = function()
+                    local prevMod = GetVehicleMod(vehicle, mod.id)
+                    SetVehicleMod(vehicle, mod.id, modIndex, false)
+                    local success = installMod(prevMod == modIndex, mod.id, {
+                        description = ('%s installed'):format(label),
+                    }, index)
+                    if not success then
+                        SetVehicleMod(vehicle, mod.id, prevMod, false)
+                    end
+                    registerPerformanceContext()
+                    lib.showContext(performanceMenuId)
+                end,
+            }
+        end
+
+        lib.registerContext({
+            id = subContextId,
+            title = mod.label,
+            menu = performanceMenuId,
+            onExit = onCustomsExit,
+            options = subOptions,
+        })
+
+        options[#options + 1] = {
+            title = mod.label,
+            description = ('%s | %s'):format(currentLabel, priceLabel(Config.Prices[mod.id])),
+            onSelect = function()
+                lib.showContext(subContextId)
             end,
-            restore = function()
-                SetVehicleMod(vehicle, mod.id, originalMods[mod.id], false)
-            end
         }
+
         ::continue::
     end
-    originalTurbo = IsToggleModOn(vehicle, 18)
+
+    -- Turbo
     if GetVehicleClass(vehicle) ~= VehicleClass.Cycles then
-        options[#options+1] = {
-            id = 18,
-            label = 'Turbo',
-            description = ('%s%s'):format(Config.Currency, Config.Prices[18]),
-            values = {'Disabled', 'Enabled'},
-            close = true,
-            defaultIndex = originalTurbo and 2 or 1,
-            set = function(index)
-                ToggleVehicleMod(vehicle, 18, index == 2)
-                return originalTurbo == (index == 2), ('Turbo %s'):format(index == 2 and 'enabled' or 'disabled')
+        local turboEnabled = IsToggleModOn(vehicle, 18)
+        local turboSubId = performanceMenuId .. '-turbo'
+
+        lib.registerContext({
+            id = turboSubId,
+            title = 'Turbo',
+            menu = performanceMenuId,
+            onExit = onCustomsExit,
+            options = {
+                {
+                    title = (not turboEnabled) and '✓ Disabled' or 'Disabled',
+                    onSelect = function()
+                        local prev = IsToggleModOn(vehicle, 18)
+                        ToggleVehicleMod(vehicle, 18, false)
+                        local success = installMod(prev == false, 18, {
+                            description = 'Turbo disabled',
+                        }, 1)
+                        if not success then ToggleVehicleMod(vehicle, 18, prev) end
+                        registerPerformanceContext()
+                        lib.showContext(performanceMenuId)
+                    end,
+                },
+                {
+                    title = turboEnabled and '✓ Enabled' or 'Enabled',
+                    onSelect = function()
+                        local prev = IsToggleModOn(vehicle, 18)
+                        ToggleVehicleMod(vehicle, 18, true)
+                        local success = installMod(prev == true, 18, {
+                            description = 'Turbo enabled',
+                        }, 2)
+                        if not success then ToggleVehicleMod(vehicle, 18, prev) end
+                        registerPerformanceContext()
+                        lib.showContext(performanceMenuId)
+                    end,
+                },
+            },
+        })
+
+        options[#options + 1] = {
+            title = 'Turbo',
+            description = ('%s | %s%s'):format(
+                turboEnabled and 'Enabled' or 'Disabled',
+                Config.Currency, Config.Prices[18]
+            ),
+            onSelect = function()
+                lib.showContext(turboSubId)
             end,
-            restore = function()
-                ToggleVehicleMod(vehicle, 18, originalTurbo)
-            end
         }
     end
-    table.sort(options, function(a, b)
-        return a.label < b.label
-    end)
-    return options
-end
 
-local menu = {
-    id = 'customs-performance',
-    title = 'Performance',
-    canClose = true,
-    disableInput = false,
-    options = {},
-    position = 'top-left',
-}
+    table.sort(options, function(a, b) return a.title < b.title end)
 
-local function onSubmit(selected, scrollIndex)
-    for _, v in pairs(menu.options) do
-        v.restore()
-    end
-    local duplicate, desc = menu.options[selected].set(scrollIndex)
-    local success = require('client.utils.installMod')(duplicate, menu.options[selected].id, {
-        description = desc,
-    }, scrollIndex)
-    if not success then menu.options[selected].restore() end
-    lib.setMenuOptions(menu.id, performance())
-    lib.showMenu(menu.id, lastIndex)
-end
+    lib.registerContext({
+        id = performanceMenuId,
+        title = 'Performance',
+        menu = mainMenuId,
+        onExit = onCustomsExit,
+        options = options,
+    })
 
-menu.onSideScroll = function(selected, scrollIndex)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    local option = menu.options[selected]
-    option.set(scrollIndex)
-end
-
-menu.onClose = function()
-    for _, v in pairs(menu.options) do
-        v.restore()
-    end
-    lib.showMenu(mainMenuId, mainLastIndex)
-end
-
-menu.onSelected = function(selected)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    lastIndex = selected
+    return #options > 0
 end
 
 return function()
-    menu.options = performance()
-    
-    if #menu.options == 0 then
+    local hasOptions = registerPerformanceContext()
+    if not hasOptions then
         lib.notify({
             title = 'Customs',
             description = 'This vehicle has no performance upgrades available',
             position = 'top',
             type = 'info'
         })
-
         return mainMenuId
     end
-    
-    lib.registerMenu(menu, onSubmit)
-    return menu.id
+    return performanceMenuId
 end

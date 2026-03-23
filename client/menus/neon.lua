@@ -1,113 +1,127 @@
-local originalNeon = {}
-local lastIndex = 1
-local originalLabelIndex = 1
+local installMod = require('client.utils.installMod')
+local neonMenuId = 'customs-neon'
 
-local function neon()
+local registerNeonContext -- forward declaration
+
+registerNeonContext = function()
     local options = {}
 
+    -- 4 neon position toggles
     for i = 1, 4 do
-        local enabled = IsVehicleNeonLightEnabled(vehicle, i - 1)
-        originalNeon[i] = enabled
+        local neonPos = i - 1 -- 0-indexed for native calls
+        local enabled = IsVehicleNeonLightEnabled(vehicle, neonPos)
+        local posLabel = Config.Neon[i].label
+        local subContextId = ('%s-pos-%d'):format(neonMenuId, i)
 
-        options[i] = {
-            label = ('Neon %s'):format(Config.Neon[i].label),
-            description = ('%s%s'):format(Config.Currency, Config.Prices['colors']),
-            values = {
-                'Disabled',
-                'Enabled',
+        lib.registerContext({
+            id = subContextId,
+            title = ('Neon %s'):format(posLabel),
+            menu = neonMenuId,
+            onExit = onCustomsExit,
+            options = {
+                {
+                    title = (not enabled) and '✓ Disabled' or 'Disabled',
+                    onSelect = function()
+                        local prev = IsVehicleNeonLightEnabled(vehicle, neonPos)
+                        SetVehicleNeonLightEnabled(vehicle, neonPos, false)
+                        local success = installMod(prev == false, 'colors', {
+                            description = ('Neon %s disabled'):format(posLabel),
+                        })
+                        if not success then SetVehicleNeonLightEnabled(vehicle, neonPos, prev) end
+                        registerNeonContext()
+                        lib.showContext(neonMenuId)
+                    end,
+                },
+                {
+                    title = enabled and '✓ Enabled' or 'Enabled',
+                    onSelect = function()
+                        local prev = IsVehicleNeonLightEnabled(vehicle, neonPos)
+                        SetVehicleNeonLightEnabled(vehicle, neonPos, true)
+                        local success = installMod(prev == true, 'colors', {
+                            description = ('Neon %s enabled'):format(posLabel),
+                        })
+                        if not success then SetVehicleNeonLightEnabled(vehicle, neonPos, prev) end
+                        registerNeonContext()
+                        lib.showContext(neonMenuId)
+                    end,
+                },
             },
-            close = true,
-            defaultIndex = enabled and 2 or 1,
-            set = function(index)
-                SetVehicleNeonLightEnabled(vehicle, i - 1, index == 2)
-                return originalNeon[i] == (index == 2), ("Neon %s %s"):format(Config.Neon[i].label, index == 2 and 'enabled' or 'disabled')
+        })
+
+        options[#options + 1] = {
+            title = ('Neon %s'):format(posLabel),
+            description = ('%s | %s%s'):format(
+                enabled and 'Enabled' or 'Disabled',
+                Config.Currency, Config.Prices['colors']
+            ),
+            onSelect = function()
+                lib.showContext(subContextId)
             end,
-            restore = function()
-                SetVehicleNeonLightEnabled(vehicle, i - 1, originalNeon[i])
-            end
         }
     end
 
+    -- Neon color
     local r, g, b = GetVehicleNeonLightsColour(vehicle)
-
-    local rgbValues = {}
-    local neonLabels = {}
+    local currentColorIndex = 1
     for i, v in ipairs(Config.NeonColors) do
-        neonLabels[i] = v.label
-        rgbValues[i] = {r = v.r, g = v.g, b = v.b}
         if v.r == r and v.g == g and v.b == b then
-            originalLabelIndex = i
+            currentColorIndex = i
+            break
         end
     end
 
-    options[5] = {
-        label = 'Neon color',
-        close = true,
-        values = neonLabels,
-        rgbValues = rgbValues,
-        set = function(index)
-            local rgb = Config.NeonColors[index]
-            SetVehicleNeonLightsColour(vehicle, rgb.r, rgb.g, rgb.b)
-            return originalLabelIndex == index, ('%s neon installed'):format(Config.NeonColors[index].label)
-        end,
-        restore = function()
-            local rgb = Config.NeonColors[originalLabelIndex]
-            SetVehicleNeonLightsColour(vehicle, rgb.r, rgb.g, rgb.b)
-        end,
-        defaultIndex = originalLabelIndex,
-    }
-
-    return options
-end
-
-local menu = {
-    id = 'customs-neon',
-    canClose = true,
-    disableInput = false,
-    title = 'Neon',
-    position = 'top-left',
-    options = {},
-}
-
-local function onSubmit(selected, scrollIndex, args)
-    local option = menu.options[selected]
-
-    for _, v in pairs(menu.options) do
-        v.restore()
+    local colorSubId = neonMenuId .. '-color'
+    local colorSubOptions = {}
+    for i, colorData in ipairs(Config.NeonColors) do
+        local index = i
+        local isCurrent = (i == currentColorIndex)
+        colorSubOptions[#colorSubOptions + 1] = {
+            title = isCurrent and ('✓ %s'):format(colorData.label) or colorData.label,
+            onSelect = function()
+                local prevR, prevG, prevB = GetVehicleNeonLightsColour(vehicle)
+                SetVehicleNeonLightsColour(vehicle, colorData.r, colorData.g, colorData.b)
+                local success = installMod(currentColorIndex == index, 'colors', {
+                    description = ('%s neon installed'):format(colorData.label),
+                })
+                if not success then
+                    SetVehicleNeonLightsColour(vehicle, prevR, prevG, prevB)
+                end
+                registerNeonContext()
+                lib.showContext(neonMenuId)
+            end,
+        }
     end
 
-    local duplicate, desc = option.set(scrollIndex)
-
-    local success = require('client.utils.installMod')(duplicate, 'colors', {
-        description = desc,
+    lib.registerContext({
+        id = colorSubId,
+        title = 'Neon color',
+        menu = neonMenuId,
+        onExit = onCustomsExit,
+        options = colorSubOptions,
     })
 
-    if not success then menu.options[selected].restore() end
+    local currentColorLabel = Config.NeonColors[currentColorIndex] and Config.NeonColors[currentColorIndex].label or 'Unknown'
+    options[#options + 1] = {
+        title = 'Neon color',
+        description = ('%s | %s%s'):format(
+            currentColorLabel,
+            Config.Currency, Config.Prices['colors']
+        ),
+        onSelect = function()
+            lib.showContext(colorSubId)
+        end,
+    }
 
-    lib.setMenuOptions(menu.id, neon())
-    lib.showMenu(menu.id, lastIndex)
-end
-
-menu.onSideScroll = function(selected, scrollIndex)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    local option = menu.options[selected]
-    option.set(scrollIndex)
-end
-
-menu.onSelected = function(selected)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    lastIndex = selected
-end
-
-menu.onClose = function()
-    for _, v in pairs(menu.options) do
-        v.restore()
-    end
-    lib.showMenu('customs-colors', colorsLastIndex)
+    lib.registerContext({
+        id = neonMenuId,
+        title = 'Neon',
+        menu = 'customs-colors',
+        onExit = onCustomsExit,
+        options = options,
+    })
 end
 
 return function()
-    menu.options = neon()
-    lib.registerMenu(menu, onSubmit)
-    return menu.id
+    registerNeonContext()
+    return neonMenuId
 end

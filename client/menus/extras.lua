@@ -1,85 +1,81 @@
-local originalExtras = {}
-local extrasLastIndex = 1
+local installMod = require('client.utils.installMod')
+local extrasMenuId = 'customs-extras'
 
-local function extras()
+local registerExtrasContext -- forward declaration
+
+registerExtrasContext = function()
     local options = {}
-    for i = 1, 14 do
-        if not DoesExtraExist(vehicle, i) then
-            goto continue
-        end
 
-        local extraTurnedOn = IsVehicleExtraTurnedOn(vehicle, i)
+    for i = 1, 14 do
+        if not DoesExtraExist(vehicle, i) then goto continue end
+
+        local extraIndex = i
+        local extraOn = IsVehicleExtraTurnedOn(vehicle, i)
+        local subContextId = ('%s-%d'):format(extrasMenuId, i)
+
+        lib.registerContext({
+            id = subContextId,
+            title = ('Extra %d'):format(i),
+            menu = extrasMenuId,
+            onExit = onCustomsExit,
+            options = {
+                {
+                    title = extraOn and '✓ Enabled' or 'Enabled',
+                    onSelect = function()
+                        local prev = IsVehicleExtraTurnedOn(vehicle, extraIndex)
+                        SetVehicleExtra(vehicle, extraIndex, 0) -- 0 = on
+                        local success = installMod(prev == true, 'cosmetic', {
+                            description = ('Extra %d enabled'):format(extraIndex),
+                        })
+                        if not success then
+                            SetVehicleExtra(vehicle, extraIndex, prev and 0 or 1)
+                        end
+                        registerExtrasContext()
+                        lib.showContext(extrasMenuId)
+                    end,
+                },
+                {
+                    title = (not extraOn) and '✓ Disabled' or 'Disabled',
+                    onSelect = function()
+                        local prev = IsVehicleExtraTurnedOn(vehicle, extraIndex)
+                        SetVehicleExtra(vehicle, extraIndex, 1) -- 1 = off
+                        local success = installMod(prev == false, 'cosmetic', {
+                            description = ('Extra %d disabled'):format(extraIndex),
+                        })
+                        if not success then
+                            SetVehicleExtra(vehicle, extraIndex, prev and 0 or 1)
+                        end
+                        registerExtrasContext()
+                        lib.showContext(extrasMenuId)
+                    end,
+                },
+            },
+        })
 
         options[#options + 1] = {
-            label = ('Extra %d'):format(i),
-            description = ('%s%s'):format(Config.Currency, Config.Prices['cosmetic']),
-            close = true,
-            values = {'Enabled', 'Disabled'},
-            set = function(selected, index)
-                SetVehicleExtra(vehicle, i, index - 1)
-                return originalExtras[i] == (index - 1 == 0), ('%s %s'):format(options[selected].label, index == 1 and 'enabled' or 'disabled')
+            title = ('Extra %d'):format(i),
+            description = ('%s | %s%s'):format(
+                extraOn and 'Enabled' or 'Disabled',
+                Config.Currency, Config.Prices['cosmetic']
+            ),
+            onSelect = function()
+                lib.showContext(subContextId)
             end,
-            restore = function()
-                SetVehicleExtra(vehicle, i, not originalExtras[i])
-            end,
-            defaultIndex = extraTurnedOn and 1 or 2,
         }
-        originalExtras[i] = extraTurnedOn
 
         ::continue::
     end
 
-    return options
-end
-
-local menu = {
-    id = 'customs-extras',
-    canClose = true,
-    disableInput = false,
-    title = 'Extras',
-    position = 'top-left',
-    options = {},
-}
-
-local function onSubmit(selected, scrollIndex, args)
-    local option = menu.options[selected]
-
-    for _, v in pairs(menu.options) do
-        v.restore()
-    end
-
-    local duplicate, desc = option.set(selected, scrollIndex)
-
-    local success = require('client.utils.installMod')(duplicate, 'cosmetic', {
-        description = desc,
+    lib.registerContext({
+        id = extrasMenuId,
+        title = 'Extras',
+        menu = mainMenuId,
+        onExit = onCustomsExit,
+        options = options,
     })
-
-    if not success then menu.options[selected].restore() end
-
-    lib.setMenuOptions('customs-extras', extras())
-    lib.showMenu('customs-extras', extrasLastIndex)
-end
-
-menu.onSideScroll = function(selected, scrollIndex)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    local option = menu.options[selected]
-    option.set(selected, scrollIndex)
-end
-
-menu.onSelected = function(selected, secondary, args)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    extrasLastIndex = selected
-end
-
-menu.onClose = function()
-    for _, v in pairs(menu.options) do
-        v.restore()
-    end
-    lib.showMenu(mainMenuId, mainLastIndex)
 end
 
 return function()
-    menu.options = extras()
-    lib.registerMenu(menu, onSubmit)
-    return menu.id
+    registerExtrasContext()
+    return extrasMenuId
 end

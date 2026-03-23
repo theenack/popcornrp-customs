@@ -1,113 +1,74 @@
-colorsLastIndex = 1
+local buildValueSubContext = require('client.utils.buildValueSubContext')
+local colorsMenuId = 'customs-colors'
 
-local function colors()
+local registerColorsContext -- forward declaration
+
+registerColorsContext = function()
     local options = {}
 
-    options[#options+1] = {
-        label = 'Paint primary',
-        close = true,
-        args = {
-            menu = 'client.menus.paint',
-            menuArgs = {
-                true,
-            }
-        }
+    options[#options + 1] = {
+        title = 'Paint primary',
+        icon = 'fa-solid fa-spray-can',
+        onSelect = function()
+            local menuId = require('client.menus.paint')(true)
+            lib.showContext(menuId)
+        end,
     }
 
-    options[#options+1] = {
-        label = 'Paint secondary',
-        close = true,
-        args = {
-            menu = 'client.menus.paint',
-            menuArgs = {
-                false,
-            }
-        }
+    options[#options + 1] = {
+        title = 'Paint secondary',
+        icon = 'fa-solid fa-spray-can',
+        onSelect = function()
+            local menuId = require('client.menus.paint')(false)
+            lib.showContext(menuId)
+        end,
     }
 
-    options[#options+1] = {
-        label = 'Neon',
-        close = true,
-        args = {
-            menu = 'client.menus.neon',
-        }
+    options[#options + 1] = {
+        title = 'Neon',
+        icon = 'fa-solid fa-lightbulb',
+        onSelect = function()
+            local menuId = require('client.menus.neon')()
+            lib.showContext(menuId)
+        end,
     }
 
-    options[#options+1] = require('client.options.xenon')()
-    options[#options+1] = require('client.options.pearlescent')()
-    options[#options+1] = require('client.options.wheelcolor')()
-    options[#options+1] = require('client.options.windowtint')()
-    options[#options+1] = require('client.options.tyresmoke')()
-    options[#options+1] = require('client.options.dashboard')()
-    options[#options+1] = require('client.options.interior')()
+    local function addValueOption(option, subId)
+        buildValueSubContext(subId, colorsMenuId, option, 'colors', 'fa-solid fa-spray-can', registerColorsContext)
+        options[#options + 1] = {
+            title = option.label,
+            description = option.description,
+            onSelect = function()
+                lib.showContext(subId)
+            end,
+        }
+    end
+
+    addValueOption(require('client.options.xenon')(),      colorsMenuId .. '-xenon')
+    addValueOption(require('client.options.pearlescent')(), colorsMenuId .. '-pearlescent')
+    addValueOption(require('client.options.wheelcolor')(),  colorsMenuId .. '-wheelcolor')
+    addValueOption(require('client.options.windowtint')(),  colorsMenuId .. '-windowtint')
+    addValueOption(require('client.options.tyresmoke')(),   colorsMenuId .. '-tyresmoke')
+    addValueOption(require('client.options.dashboard')(),   colorsMenuId .. '-dashboard')
+    addValueOption(require('client.options.interior')(),    colorsMenuId .. '-interior')
 
     local liveryOption = require('client.options.livery')()
     if #liveryOption.values > 0 then
-        options[#options+1] = liveryOption
+        addValueOption(liveryOption, colorsMenuId .. '-livery')
     end
 
-    table.sort(options, function(a, b)
-        return a.label < b.label
-    end)
+    table.sort(options, function(a, b) return a.title < b.title end)
 
-    return options
-end
-
-local menu = {
-    id = 'customs-colors',
-    title = 'Cosmetics - Colors',
-    canClose = true,
-    disableInput = false,
-    options = {},
-    position = 'top-left',
-}
-
-local function onSubmit(selected, scrollIndex, args)
-    for _, v in pairs(menu.options) do
-        if not v.args?.menu then v.restore() end
-    end
-
-    local subMenuName = args?.menu
-    if subMenuName then
-        local menuId = require(subMenuName)(args?.menuArgs and table.unpack(args.menuArgs))
-        lib.showMenu(menuId, 1)
-        return
-    end
-
-
-    local duplicate, desc = menu.options[selected].set(scrollIndex)
-
-    local success = require('client.utils.installMod')(duplicate, 'colors', {
-        description = desc,
-        icon = 'fa-solid fa-spray-can',
+    lib.registerContext({
+        id = colorsMenuId,
+        title = 'Cosmetics - Colors',
+        menu = mainMenuId,
+        onExit = onCustomsExit,
+        options = options,
     })
-
-    if not success then menu.options[selected].restore() end
-
-    lib.setMenuOptions(menu.id, colors())
-    lib.showMenu(menu.id, colorsLastIndex)
-end
-
-menu.onSideScroll = function(selected, scrollIndex)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    local option = menu.options[selected]
-    option.set(scrollIndex)
-end
-
-menu.onClose = function()
-    for _, v in pairs(menu.options) do
-        if not v.args?.menu then v.restore() end -- v.args.menu means it's a submenu
-    end
-    lib.showMenu(mainMenuId, mainLastIndex)
-end
-
-menu.onSelected = function(selected)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    colorsLastIndex = selected
 end
 
 return function()
-    menu.options = colors()
-    lib.registerMenu(menu, onSubmit)
-    return menu.id
+    registerColorsContext()
+    return colorsMenuId
 end

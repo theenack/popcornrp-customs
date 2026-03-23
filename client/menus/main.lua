@@ -1,6 +1,5 @@
-mainLastIndex = 1
-vehicle = 0
 mainMenuId = 'customs-main'
+vehicle = 0
 local QBCore
 local inMenu = false
 local dragcam = require('client.dragcam')
@@ -11,59 +10,20 @@ if GetResourceState('qb-core') == 'started' then
     QBCore = exports['qb-core']:GetCoreObject()
 end
 
-local menu = {
-    id = mainMenuId,
-    canClose = true,
-    disableInput = false,
-    title = 'Popcorn Customs',
-    position = 'top-left',
-    options = {},
-}
+local openMainMenu -- forward declaration
 
-local function main()
-    if GetVehicleBodyHealth(vehicle) < 1000.0 then
-        return {{
-            label = 'Repair',
-            description = ('%s%d'):format(Config.Currency, math.ceil(1000 - GetVehicleBodyHealth(vehicle))),
-            close = true,
-        }}
+onCustomsExit = function()
+    inMenu = false
+    stopDragCam()
+    if not lib.callback.await('customs:server:adminMenuOpened') then
+        lib.showTextUI('Press [E] to tune your car', {
+            icon = 'fa-solid fa-car',
+            position = 'left-center',
+        })
     end
-
-    local options = {
-        {
-            label = 'Performance',
-            close = true,
-            args = {
-                menu = 'client.menus.performance',
-            }
-        },
-        {
-            label = 'Cosmetics - Parts',
-            close = true,
-            args = {
-                menu = 'client.menus.parts',
-            }
-        },
-        {
-            label = 'Cosmetics - Colors',
-            close = true,
-            args = {
-                menu = 'client.menus.colors',
-            }
-        },
-    }
-
-    if DoesExtraExist(vehicle, 1) then
-        options[#options + 1] = {
-            label = 'Extras',
-            close = true,
-            args = {
-                menu = 'client.menus.extras',
-            }
-        }
+    if QBCore then
+        TriggerServerEvent("customs:server:saveVehicleProps")
     end
-
-    return options
 end
 
 local function disableControls()
@@ -104,39 +64,65 @@ local function repair()
             type = 'error'
         })
     end
-
-    menu.options = main()
-    lib.setMenuOptions(menu.id, menu.options)
-    lib.showMenu(menu.id, 1)
+    openMainMenu()
 end
 
-local function onSubmit(selected, scrollIndex, args)
-    if menu.options[selected].label == 'Repair' then
-        lib.hideMenu(false)
-        repair()
-        return
-    end
-    local menuId = require(args.menu)()
-    lib.showMenu(menuId, 1)
-end
+openMainMenu = function()
+    local options = {}
 
-menu.onSelected = function(selected)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    mainLastIndex = selected
-end
+    if GetVehicleBodyHealth(vehicle) < 1000.0 then
+        options[#options + 1] = {
+            title = 'Repair',
+            description = ('%s%d'):format(Config.Currency, math.ceil(1000 - GetVehicleBodyHealth(vehicle))),
+            icon = 'fa-solid fa-wrench',
+            onSelect = function()
+                repair()
+            end,
+        }
+    else
+        options[#options + 1] = {
+            title = 'Performance',
+            icon = 'fa-solid fa-gauge-high',
+            onSelect = function()
+                local menuId = require('client.menus.performance')()
+                if menuId then lib.showContext(menuId) end
+            end,
+        }
+        options[#options + 1] = {
+            title = 'Cosmetics - Parts',
+            icon = 'fa-solid fa-car-side',
+            onSelect = function()
+                local menuId = require('client.menus.parts')()
+                if menuId then lib.showContext(menuId) end
+            end,
+        }
+        options[#options + 1] = {
+            title = 'Cosmetics - Colors',
+            icon = 'fa-solid fa-palette',
+            onSelect = function()
+                local menuId = require('client.menus.colors')()
+                if menuId then lib.showContext(menuId) end
+            end,
+        }
+        if DoesExtraExist(vehicle, 1) then
+            options[#options + 1] = {
+                title = 'Extras',
+                icon = 'fa-solid fa-sliders',
+                onSelect = function()
+                    local menuId = require('client.menus.extras')()
+                    if menuId then lib.showContext(menuId) end
+                end,
+            }
+        end
+    end
 
-menu.onClose = function()
-    inMenu = false
-    stopDragCam()
-    if not lib.callback.await('customs:server:adminMenuOpened') then
-        lib.showTextUI('Press [E] to tune your car', {
-            icon = 'fa-solid fa-car',
-            position = 'left-center',
-        })
-    end
-    if QBCore then
-        TriggerServerEvent("customs:server:saveVehicleProps")
-    end
+    lib.registerContext({
+        id = mainMenuId,
+        title = 'Popcorn Customs',
+        onExit = onCustomsExit,
+        options = options,
+    })
+    lib.showContext(mainMenuId)
 end
 
 lib.callback.register('customs:client:vehicleProps', function()
@@ -147,9 +133,7 @@ return function()
     if not cache.vehicle or inMenu then return end
     vehicle = cache.vehicle
     SetVehicleModKit(vehicle, 0)
-    menu.options = main()
-    lib.registerMenu(menu, onSubmit)
-    lib.showMenu(menu.id, 1)
+    openMainMenu()
     disableControls()
     startDragCam(vehicle)
 end

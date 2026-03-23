@@ -1,9 +1,8 @@
-local originalWheelType
-local originalMod
-local originalRearWheel
-local lastIndex = 1
 local WheelType = require('client.utils.enums.WheelType')
 local VehicleClass = require('client.utils.enums.VehicleClass')
+local installMod = require('client.utils.installMod')
+local wheelsMenuId = 'customs-wheels'
+local partsMenuId = 'customs-parts'
 
 ---@param wheelType WheelType
 local function isWheelTypeAllowed(wheelType)
@@ -11,29 +10,27 @@ local function isWheelTypeAllowed(wheelType)
     if class == VehicleClass.Cycles then return false end
 
     if class == VehicleClass.Motorcycles then
-        if wheelType == WheelType.Bike then
-            return true
-        end
-        return false
+        return wheelType == WheelType.Bike
     end
 
     if class == VehicleClass.OpenWheels then
-        if wheelType == WheelType.OpenWheel then
-            return true
-        end
-        return false
+        return wheelType == WheelType.OpenWheel
     end
     return true
 end
 
-local function wheels()
-    local options = {}
+local registerWheelsContext -- forward declaration
 
-    originalWheelType = GetVehicleWheelType(vehicle)
-    originalMod = GetVehicleMod(vehicle, 23)
+registerWheelsContext = function()
+    local options = {}
+    local originalWheelType = GetVehicleWheelType(vehicle)
+    local originalMod = GetVehicleMod(vehicle, 23)
+    local originalRearWheel = GetVehicleMod(vehicle, 24)
+    local bikeLabels = nil
 
     for _, category in ipairs(Config.Wheels) do
         if not isWheelTypeAllowed(category.id) then goto continue end
+
         SetVehicleWheelType(vehicle, category.id)
         local modCount = GetNumVehicleMods(vehicle, 23)
         local labels = {}
@@ -41,101 +38,119 @@ local function wheels()
             labels[j] = GetLabelText(GetModTextLabel(vehicle, 23, j - 1))
         end
 
-        options[#options + 1] = {
-            id = category.id,
-            label = category.label,
-            description = ('%s%s'):format(Config.Currency, Config.Prices['cosmetic']),
-            values = labels,
-            close = true,
-            set = function(wheelType, index)
-                SetVehicleWheelType(vehicle, wheelType)
-                SetVehicleMod(vehicle, 23, index - 1, false)
-            end,
-            defaultIndex = originalWheelType == category.id and originalMod + 1 or 1
-        }
+        if category.id == WheelType.Bike then
+            bikeLabels = labels
+        end
 
-        if GetVehicleClass(vehicle) == VehicleClass.Motorcycles then
-            originalRearWheel = GetVehicleMod(vehicle, 24)
-            options[#options + 1] = {
-                id = 'rear',
-                label = 'Bike rear wheel',
-                values = labels,
-                close = true,
-                set = function(_, index)
-                    SetVehicleWheelType(vehicle, 6)
-                    SetVehicleMod(vehicle, 24, index - 1, false)
+        local subContextId = ('%s-%d'):format(wheelsMenuId, category.id)
+        local subOptions = {}
+        for j, label in ipairs(labels) do
+            local idx = j
+            local isCurrent = (originalWheelType == category.id and idx - 1 == originalMod)
+            subOptions[#subOptions + 1] = {
+                title = isCurrent and ('✓ %s'):format(label) or label,
+                onSelect = function()
+                    SetVehicleWheelType(vehicle, category.id)
+                    SetVehicleMod(vehicle, 23, idx - 1, false)
+                    local duplicate = category.id == originalWheelType and idx - 1 == originalMod
+                    local success = installMod(duplicate, 'cosmetic', {
+                        description = ('%s %s installed'):format(category.label, label),
+                    })
+                    if not success then
+                        SetVehicleWheelType(vehicle, originalWheelType)
+                        SetVehicleMod(vehicle, 23, originalMod, false)
+                    end
+                    registerWheelsContext()
+                    lib.showContext(wheelsMenuId)
                 end,
-                defaultIndex = originalWheelType == 6 and originalRearWheel + 1 or 1,
             }
         end
+
+        lib.registerContext({
+            id = subContextId,
+            title = category.label,
+            menu = wheelsMenuId,
+            onExit = onCustomsExit,
+            options = subOptions,
+        })
+
+        local currentLabel = (originalWheelType == category.id and labels[originalMod + 1]) or 'None'
+        options[#options + 1] = {
+            title = category.label,
+            description = ('%s | %s%s'):format(
+                currentLabel,
+                Config.Currency, Config.Prices['cosmetic']
+            ),
+            onSelect = function()
+                lib.showContext(subContextId)
+            end,
+        }
 
         ::continue::
     end
 
+    -- Restore the original wheel type after iterating
     SetVehicleWheelType(vehicle, originalWheelType)
+
+    -- Bike rear wheel (motorcycles only)
+    if GetVehicleClass(vehicle) == VehicleClass.Motorcycles and bikeLabels and #bikeLabels > 0 then
+        local rearSubId = wheelsMenuId .. '-rear'
+        local rearSubOptions = {}
+        for j, label in ipairs(bikeLabels) do
+            local idx = j
+            local isCurrent = (idx - 1 == originalRearWheel)
+            rearSubOptions[#rearSubOptions + 1] = {
+                title = isCurrent and ('✓ %s'):format(label) or label,
+                onSelect = function()
+                    SetVehicleWheelType(vehicle, WheelType.Bike)
+                    SetVehicleMod(vehicle, 24, idx - 1, false)
+                    local success = installMod(idx - 1 == originalRearWheel, 'cosmetic', {
+                        description = ('Bike rear %s installed'):format(label),
+                    })
+                    if not success then
+                        SetVehicleMod(vehicle, 24, originalRearWheel, false)
+                    end
+                    registerWheelsContext()
+                    lib.showContext(wheelsMenuId)
+                end,
+            }
+        end
+
+        lib.registerContext({
+            id = rearSubId,
+            title = 'Bike rear wheel',
+            menu = wheelsMenuId,
+            onExit = onCustomsExit,
+            options = rearSubOptions,
+        })
+
+        options[#options + 1] = {
+            title = 'Bike rear wheel',
+            description = ('%s | %s%s'):format(
+                bikeLabels[originalRearWheel + 1] or 'Stock',
+                Config.Currency, Config.Prices['cosmetic']
+            ),
+            onSelect = function()
+                lib.showContext(rearSubId)
+            end,
+        }
+    end
 
     table.sort(options, function(a, b)
-        if a.id == 'rear' then return false end
-        return a.label < b.label
+        if a.title == 'Bike rear wheel' then return false end
+        return a.title < b.title
     end)
 
-    return options
-end
-
-local menu = {
-    id = 'customs-wheels',
-    canClose = true,
-    disableInput = false,
-    title = 'Wheels',
-    position = 'top-left',
-    options = {}
-}
-
-local function onSubmit(selected, scrollIndex)
-    local option = menu.options[selected]
-    local label = option.values[scrollIndex]
-    local duplicate = option.id == originalWheelType and scrollIndex - 1 == originalMod
-
-    if option.id == 6 then
-        SetVehicleMod(vehicle, 24, originalRearWheel, false)
-    elseif option.id == 'rear' then
-        SetVehicleMod(vehicle, 23, originalMod, false)
-    end
-
-    local success = require('client.utils.installMod')(duplicate, 'cosmetic', {
-        description = ('%s %s installed'):format(option.label, label),
+    lib.registerContext({
+        id = wheelsMenuId,
+        title = 'Wheels',
+        menu = partsMenuId,
+        onExit = onCustomsExit,
+        options = options,
     })
-
-    if not success then
-        SetVehicleWheelType(vehicle, originalWheelType)
-        SetVehicleMod(vehicle, 23, originalMod, false)
-        SetVehicleMod(vehicle, 24, originalRearWheel, false)
-    end
-
-    lib.setMenuOptions(menu.id, wheels())
-    lib.showMenu(menu.id, lastIndex)
-end
-
-menu.onSideScroll = function(selected, scrollIndex)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    local option = menu.options[selected]
-    option.set(option.id, scrollIndex)
-end
-
-menu.onSelected = function(selected)
-    PlaySoundFrontend(-1, "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
-    lastIndex = selected
-end
-
-menu.onClose = function()
-    SetVehicleWheelType(vehicle, originalWheelType)
-    SetVehicleMod(vehicle, 23, originalMod, false)
-    SetVehicleMod(vehicle, 24, originalRearWheel, false)
-    lib.showMenu('customs-parts', partsLastIndex)
 end
 
 return function()
-    menu.options = wheels()
-    lib.registerMenu(menu, onSubmit)
-    return menu.id
+    registerWheelsContext()
+    return wheelsMenuId
 end
